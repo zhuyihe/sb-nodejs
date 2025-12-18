@@ -2,7 +2,11 @@
 set -e
 
 # ================== 配置区域 ==================
+# 固定隧道填写token，不填默认为临时隧道
 ARGO_TOKEN=""
+
+# 单端口模式 UDP 协议选择: hy2 (默认) 或 tuic
+SINGLE_PORT_UDP="hy2"
 
 # ================== CF 优选域名列表 ==================
 CF_DOMAINS=(
@@ -48,13 +52,14 @@ PORT_COUNT=${#AVAILABLE_PORTS[@]}
 echo "[端口] 发现 $PORT_COUNT 个: ${AVAILABLE_PORTS[*]}"
 
 # ================== 端口分配逻辑 ==================
-# 1个端口: TUIC(UDP) + HTTP(TCP) + Argo
+# 1个端口: HY2/TUIC(UDP) + HTTP(TCP) + Argo (根据 SINGLE_PORT_UDP 配置)
 # 2个端口: TUIC(UDP1) + HY2(UDP2) + Reality(TCP1) + HTTP(TCP2) + Argo
-# 3个+端口: 同上
 
 if [ $PORT_COUNT -eq 1 ]; then
-    TUIC_PORT=${AVAILABLE_PORTS[0]}
+    UDP_PORT=${AVAILABLE_PORTS[0]}
+    TUIC_PORT=""
     HY2_PORT=""
+    [[ "$SINGLE_PORT_UDP" == "tuic" ]] && TUIC_PORT=$UDP_PORT || HY2_PORT=$UDP_PORT
     REALITY_PORT=""
     HTTP_PORT=${AVAILABLE_PORTS[0]}
     SINGLE_PORT_MODE=true
@@ -142,16 +147,16 @@ generate_sub() {
     local argo_domain="$1"
     > "${FILE_PATH}/list.txt"
     
-    # TUIC (UDP) - 总是启用
-    echo "tuic://${UUID}:admin@${PUBLIC_IP}:${TUIC_PORT}?sni=www.bing.com&alpn=h3&congestion_control=bbr&allowInsecure=1#TUIC-${ISP}" >> "${FILE_PATH}/list.txt"
+    # TUIC (UDP)
+    [ -n "$TUIC_PORT" ] && echo "tuic://${UUID}:admin@${PUBLIC_IP}:${TUIC_PORT}?sni=www.bing.com&alpn=h3&congestion_control=bbr&allowInsecure=1#TUIC-${ISP}" >> "${FILE_PATH}/list.txt"
     
-    # HY2 (UDP) - 仅多端口模式
+    # HY2 (UDP)
     [ -n "$HY2_PORT" ] && echo "hysteria2://${UUID}@${PUBLIC_IP}:${HY2_PORT}/?sni=www.bing.com&insecure=1#Hysteria2-${ISP}" >> "${FILE_PATH}/list.txt"
     
     # Reality (TCP) - 仅多端口模式
     [ -n "$REALITY_PORT" ] && echo "vless://${UUID}@${PUBLIC_IP}:${REALITY_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.nazhumi.com&fp=chrome&pbk=${public_key}&type=tcp#Reality-${ISP}" >> "${FILE_PATH}/list.txt"
     
-    # Argo VLESS - 总是启用
+    # Argo VLESS
     [ -n "$argo_domain" ] && echo "vless://${UUID}@${BEST_CF_DOMAIN}:443?encryption=none&security=tls&sni=${argo_domain}&type=ws&host=${argo_domain}&path=%2F${UUID}-vless#Argo-${ISP}" >> "${FILE_PATH}/list.txt"
     
     base64 "${FILE_PATH}/list.txt" | tr -d '\n' > "${FILE_PATH}/sub.txt"
@@ -184,25 +189,28 @@ echo "[CONFIG] 生成配置..."
 # 构建 inbounds 数组
 INBOUNDS=""
 
-# 1. TUIC (UDP) - 总是启用
-INBOUNDS="{
-    \"type\": \"tuic\",
-    \"tag\": \"tuic-in\",
-    \"listen\": \"::\",
-    \"listen_port\": ${TUIC_PORT},
-    \"users\": [{\"uuid\": \"${UUID}\", \"password\": \"admin\"}],
-    \"congestion_control\": \"bbr\",
-    \"tls\": {
-        \"enabled\": true,
-        \"alpn\": [\"h3\"],
-        \"certificate_path\": \"${FILE_PATH}/cert.pem\",
-        \"key_path\": \"${FILE_PATH}/private.key\"
-    }
-}"
+# TUIC (UDP)
+if [ -n "$TUIC_PORT" ]; then
+    INBOUNDS="{
+        \"type\": \"tuic\",
+        \"tag\": \"tuic-in\",
+        \"listen\": \"::\",
+        \"listen_port\": ${TUIC_PORT},
+        \"users\": [{\"uuid\": \"${UUID}\", \"password\": \"admin\"}],
+        \"congestion_control\": \"bbr\",
+        \"tls\": {
+            \"enabled\": true,
+            \"alpn\": [\"h3\"],
+            \"certificate_path\": \"${FILE_PATH}/cert.pem\",
+            \"key_path\": \"${FILE_PATH}/private.key\"
+        }
+    }"
+fi
 
-# 2. HY2 (UDP) - 仅多端口模式
+# HY2 (UDP)
 if [ -n "$HY2_PORT" ]; then
-    INBOUNDS="${INBOUNDS},{
+    [ -n "$INBOUNDS" ] && INBOUNDS="${INBOUNDS},"
+    INBOUNDS="${INBOUNDS}{
         \"type\": \"hysteria2\",
         \"tag\": \"hy2-in\",
         \"listen\": \"::\",
@@ -217,7 +225,7 @@ if [ -n "$HY2_PORT" ]; then
     }"
 fi
 
-# 3. VLESS Reality (TCP) - 仅多端口模式
+# VLESS Reality (TCP) - 仅多端口模式
 if [ -n "$REALITY_PORT" ]; then
     INBOUNDS="${INBOUNDS},{
         \"type\": \"vless\",
@@ -238,7 +246,7 @@ if [ -n "$REALITY_PORT" ]; then
     }"
 fi
 
-# 4. VLESS for Argo (内部监听) - 总是启用
+# VLESS for Argo (内部监听)
 INBOUNDS="${INBOUNDS},{
     \"type\": \"vless\",
     \"tag\": \"vless-argo-in\",
@@ -298,10 +306,11 @@ SUB_URL="http://${PUBLIC_IP}:${HTTP_PORT}/sub"
 echo ""
 echo "==================================================="
 if [ "$SINGLE_PORT_MODE" = true ]; then
-    echo "模式: 单端口 (TUIC + Argo)"
+    echo "模式: 单端口 (${SINGLE_PORT_UDP^^} + Argo)"
     echo ""
     echo "代理节点:"
-    echo "  - TUIC (UDP): ${PUBLIC_IP}:${TUIC_PORT}"
+    [ -n "$HY2_PORT" ] && echo "  - HY2 (UDP): ${PUBLIC_IP}:${HY2_PORT}"
+    [ -n "$TUIC_PORT" ] && echo "  - TUIC (UDP): ${PUBLIC_IP}:${TUIC_PORT}"
     [ -n "$ARGO_DOMAIN" ] && echo "  - Argo (WS): ${ARGO_DOMAIN}"
 else
     echo "模式: 多端口 (TUIC + HY2 + Reality + Argo)"
