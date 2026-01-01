@@ -21,6 +21,8 @@ CF_DOMAINS=(
 # ================== 切换到脚本目录 ==================
 cd "$(dirname "$0")"
 export FILE_PATH="${PWD}/.npm"
+
+rm -rf "$FILE_PATH"
 mkdir -p "$FILE_PATH"
 
 # ================== 获取公网 IP ==================
@@ -52,9 +54,6 @@ PORT_COUNT=${#AVAILABLE_PORTS[@]}
 echo "[端口] 发现 $PORT_COUNT 个: ${AVAILABLE_PORTS[*]}"
 
 # ================== 端口分配逻辑 ==================
-# 1个端口: HY2/TUIC(UDP) + HTTP(TCP) + Argo (根据 SINGLE_PORT_UDP 配置)
-# 2个端口: TUIC(UDP1) + HY2(UDP2) + Reality(TCP1) + HTTP(TCP2) + Argo
-
 if [ $PORT_COUNT -eq 1 ]; then
     UDP_PORT=${AVAILABLE_PORTS[0]}
     TUIC_PORT=""
@@ -97,7 +96,7 @@ download_file() {
 download_file "${BASE_URL}/sb" "$SB_FILE"
 download_file "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-${ARGO_ARCH}" "$ARGO_FILE"
 
-# ================== Reality 密钥 (仅多端口模式需要) ==================
+# ================== Reality 密钥 ==================
 if [ "$SINGLE_PORT_MODE" = false ]; then
     echo "[密钥] 检查中..."
     KEY_FILE="${FILE_PATH}/key.txt"
@@ -113,28 +112,16 @@ if [ "$SINGLE_PORT_MODE" = false ]; then
     echo "[密钥] 已就绪"
 fi
 
-# ================== 证书 ==================
-echo "[证书] 检查中..."
-if [ ! -f "${FILE_PATH}/cert.pem" ]; then
-    cat > "${FILE_PATH}/private.key" <<'KEYEOF'
------BEGIN EC PRIVATE KEY-----
-MHcCAQEEIM4792SEtPqIt1ywqTd/0bYidBqpYV/+siNnfBYsdUYsoAoGCCqGSM49
-AwEHoUQDQgAE1kHafPj07rJG+HboH2ekAI4r+e6TL38GWASAnngZreoQDF16ARa/
-TsyLyFoPkhTxSbehH/OBEjHtSZGaDhMqQ==
------END EC PRIVATE KEY-----
-KEYEOF
-    cat > "${FILE_PATH}/cert.pem" <<'CERTEOF'
------BEGIN CERTIFICATE-----
-MIIBejCCASGgAwIBAgIUFWeQL3556PNJLp/veCFxGNj9crkwCgYIKoZIzj0EAwIw
-EzERMA8GA1UEAwwIYmluZy5jb20wHhcNMjUwMTAxMDEwMTAwWhcNMzUwMTAxMDEw
-MTAwWjATMREwDwYDVQQDDAhiaW5nLmNvbTBZMBMGByqGSM49AgEGCCqGSM49AwEH
-A0IABNZB2nz49O6yRvh26B9npACOK/nuky9/BlgEgJ54Ga3qEAxdegEWv07Mi8ha
-D5IU8Um3oR/zgRIx7UmRmg4TKkOjUzBRMB0GA1UdDgQWBBTV1cFID7UISE7PLTBR
-BfGbgrkMNzAfBgNVHSMEGDAWgBTV1cFID7UISE7PLTBRBfGbgrkMNzAPBgNVHRMB
-Af8EBTADAQH/MAoGCCqGSM49BAMCA0cAMEQCIARDAJvg0vd/ytrQVvEcSm6XTlB+
-eQ6OFb9LbLYL9Zi+AiB+foMbi4y/0YUQlTtz7as9S8/lciBF5VCUoVIKS+vX2g==
------END CERTIFICATE-----
-CERTEOF
+# ================== 证书生成 ==================
+echo "[证书] 生成中..."
+# 优先使用 OpenSSL 生成标准证书
+if command -v openssl >/dev/null 2>&1; then
+    openssl req -x509 -newkey rsa:2048 -nodes -sha256 -keyout "${FILE_PATH}/private.key" -out "${FILE_PATH}/cert.pem" -days 3650 -subj "/CN=www.bing.com" >/dev/null 2>&1
+else
+    # 备用
+    printf -- "-----BEGIN EC PRIVATE KEY-----\nMHcCAQEEIM4792SEtPqIt1ywqTd/0bYidBqpYV/+siNnfBYsdUYsoAoGCCqGSM49\nAwEHoUQDQgAE1kHafPj07rJG+HboH2ekAI4r+e6TL38GWASAnngZreoQDF16ARa/\nTsyLyFoPkhTxSbehH/OBEjHtSZGaDhMqQ==\n-----END EC PRIVATE KEY-----\n" > "${FILE_PATH}/private.key"
+
+    printf -- "-----BEGIN CERTIFICATE-----\nMIIBejCCASGgAwIBAgIUFWeQL3556PNJLp/veCFxGNj9crkwCgYIKoZIzj0EAwIw\nEzERMA8GA1UEAwwIYmluZy5jb20wHhcNMjUwMTAxMDEwMTAwWhcNMzUwMTAxMDEw\nMTAwWjATMREwDwYDVQQDDAhiaW5nLmNvbTBZMBMGByqGSM49AgEGCCqGSM49AwEH\nA0IABNZB2nz49O6yRvh26B9npACOK/nuky9/BlgEgJ54Ga3qEAxdegEWv07Mi8ha\nD5IU8Um3oR/zgRIx7UmRmg4TKkOjUzBRMB0GA1UdDgQWBBTV1cFID7UISE7PLTBR\nBfGbgrkMNzAfBgNVHSMEGDAWgBTV1cFID7UISE7PLTBRBfGbgrkMNzAPBgNVHRMB\nAf8EBTADAQH/MAoGCCqGSM49BAMCA0cAMEQCIARDAJvg0vd/ytrQVvEcSm6XTlB+\neQ6OFb9LbLYL9Zi+AiB+foMbi4y/0YUQlTtz7as9S8/lciBF5VCUoVIKS+vX2g==\n-----END CERTIFICATE-----\n" > "${FILE_PATH}/cert.pem"
 fi
 echo "[证书] 已就绪"
 
@@ -153,13 +140,13 @@ generate_sub() {
     # HY2 (UDP)
     [ -n "$HY2_PORT" ] && echo "hysteria2://${UUID}@${PUBLIC_IP}:${HY2_PORT}/?sni=www.bing.com&insecure=1#Hysteria2-${ISP}" >> "${FILE_PATH}/list.txt"
     
-    # Reality (TCP) - 仅多端口模式
+    # Reality (TCP)
     [ -n "$REALITY_PORT" ] && echo "vless://${UUID}@${PUBLIC_IP}:${REALITY_PORT}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.nazhumi.com&fp=chrome&pbk=${public_key}&type=tcp#Reality-${ISP}" >> "${FILE_PATH}/list.txt"
     
     # Argo VLESS
     [ -n "$argo_domain" ] && echo "vless://${UUID}@${BEST_CF_DOMAIN}:443?encryption=none&security=tls&sni=${argo_domain}&type=ws&host=${argo_domain}&path=%2F${UUID}-vless#Argo-${ISP}" >> "${FILE_PATH}/list.txt"
-    
-    base64 "${FILE_PATH}/list.txt" | tr -d '\n' > "${FILE_PATH}/sub.txt"
+
+    cat "${FILE_PATH}/list.txt" > "${FILE_PATH}/sub.txt"
 }
 
 # ================== HTTP 服务器脚本 ==================
@@ -186,7 +173,6 @@ echo "[HTTP] 订阅服务已启动"
 # ================== 生成 sing-box 配置 ==================
 echo "[CONFIG] 生成配置..."
 
-# 构建 inbounds 数组
 INBOUNDS=""
 
 # TUIC (UDP)
@@ -225,7 +211,7 @@ if [ -n "$HY2_PORT" ]; then
     }"
 fi
 
-# VLESS Reality (TCP) - 仅多端口模式
+# VLESS Reality (TCP)
 if [ -n "$REALITY_PORT" ]; then
     INBOUNDS="${INBOUNDS},{
         \"type\": \"vless\",
@@ -246,7 +232,7 @@ if [ -n "$REALITY_PORT" ]; then
     }"
 fi
 
-# VLESS for Argo (内部监听)
+# VLESS for Argo
 INBOUNDS="${INBOUNDS},{
     \"type\": \"vless\",
     \"tag\": \"vless-argo-in\",
@@ -276,17 +262,18 @@ sleep 2
 
 if ! kill -0 $SB_PID 2>/dev/null; then
     echo "[SING-BOX] 启动失败"
+    head -n 2 "${FILE_PATH}/private.key"
     "$SB_FILE" run -c "${FILE_PATH}/config.json"
     exit 1
 fi
 echo "[SING-BOX] 已启动 PID: $SB_PID"
 
-# ================== Argo 隧道 ==================
+# ================== [修复] Argo 隧道 ==================
 ARGO_LOG="${FILE_PATH}/argo.log"
 ARGO_DOMAIN=""
 
-echo "[Argo] 启动隧道..."
-"$ARGO_FILE" tunnel --url http://127.0.0.1:${ARGO_PORT} --no-autoupdate --edge-ip-version auto > "$ARGO_LOG" 2>&1 &
+echo "[Argo] 启动隧道 (HTTP2模式)..."
+"$ARGO_FILE" tunnel --edge-ip-version auto --protocol http2 --no-autoupdate --url http://127.0.0.1:${ARGO_PORT} > "$ARGO_LOG" 2>&1 &
 ARGO_PID=$!
 
 for i in {1..30}; do
