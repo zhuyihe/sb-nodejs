@@ -8,6 +8,15 @@ ARGO_TOKEN=""
 # 单端口模式 UDP 协议选择: hy2 (默认) 或 tuic
 SINGLE_PORT_UDP="hy2"
 
+# ================== 上游代理配置 (链式代理) ==================
+# 留空则直连，填写后所有流量将通过此代理出去
+# 代理类型: http 或 socks (socks5支持UDP)
+UPSTREAM_PROXY_TYPE="socks"
+UPSTREAM_PROXY_HOST="45.45.201.3"
+UPSTREAM_PROXY_PORT="5290"
+UPSTREAM_PROXY_USER="uaghwyzb"
+UPSTREAM_PROXY_PASS="36281yeqw4of"
+
 # ================== CF 优选域名列表 ==================
 CF_DOMAINS=(
     "cf.090227.xyz"
@@ -255,11 +264,53 @@ INBOUNDS="${INBOUNDS},{
     }
 }"
 
+# ================== 出站配置 (支持链式代理) ==================
+if [ -n "$UPSTREAM_PROXY_HOST" ] && [ -n "$UPSTREAM_PROXY_PORT" ]; then
+    echo "[CONFIG] 启用链式代理: ${UPSTREAM_PROXY_TYPE}://${UPSTREAM_PROXY_HOST}:${UPSTREAM_PROXY_PORT}"
+    
+    if [ "$UPSTREAM_PROXY_TYPE" = "socks" ]; then
+        OUTBOUNDS="[
+            {
+                \"type\": \"socks\",
+                \"tag\": \"upstream-proxy\",
+                \"server\": \"${UPSTREAM_PROXY_HOST}\",
+                \"server_port\": ${UPSTREAM_PROXY_PORT},
+                \"username\": \"${UPSTREAM_PROXY_USER}\",
+                \"password\": \"${UPSTREAM_PROXY_PASS}\",
+                \"udp_over_tcp\": false
+            },
+            {
+                \"type\": \"direct\",
+                \"tag\": \"direct\",
+                \"detour\": \"upstream-proxy\"
+            }
+        ]"
+    else
+        OUTBOUNDS="[
+            {
+                \"type\": \"http\",
+                \"tag\": \"upstream-proxy\",
+                \"server\": \"${UPSTREAM_PROXY_HOST}\",
+                \"server_port\": ${UPSTREAM_PROXY_PORT},
+                \"username\": \"${UPSTREAM_PROXY_USER}\",
+                \"password\": \"${UPSTREAM_PROXY_PASS}\"
+            },
+            {
+                \"type\": \"direct\",
+                \"tag\": \"direct\",
+                \"detour\": \"upstream-proxy\"
+            }
+        ]"
+    fi
+else
+    OUTBOUNDS="[{\"type\": \"direct\", \"tag\": \"direct\"}]"
+fi
+
 cat > "${FILE_PATH}/config.json" <<CFGEOF
 {
     "log": {"level": "warn"},
     "inbounds": [${INBOUNDS}],
-    "outbounds": [{"type": "direct", "tag": "direct"}]
+    "outbounds": ${OUTBOUNDS}
 }
 CFGEOF
 echo "[CONFIG] 配置已生成"
