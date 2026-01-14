@@ -272,33 +272,23 @@ if [ -n "$UPSTREAM_PROXY_HOST" ] && [ -n "$UPSTREAM_PROXY_PORT" ]; then
         OUTBOUNDS="[
             {
                 \"type\": \"socks\",
-                \"tag\": \"upstream-proxy\",
+                \"tag\": \"direct\",
                 \"server\": \"${UPSTREAM_PROXY_HOST}\",
                 \"server_port\": ${UPSTREAM_PROXY_PORT},
                 \"username\": \"${UPSTREAM_PROXY_USER}\",
                 \"password\": \"${UPSTREAM_PROXY_PASS}\",
                 \"udp_over_tcp\": false
-            },
-            {
-                \"type\": \"direct\",
-                \"tag\": \"direct\",
-                \"detour\": \"upstream-proxy\"
             }
         ]"
     else
         OUTBOUNDS="[
             {
                 \"type\": \"http\",
-                \"tag\": \"upstream-proxy\",
+                \"tag\": \"direct\",
                 \"server\": \"${UPSTREAM_PROXY_HOST}\",
                 \"server_port\": ${UPSTREAM_PROXY_PORT},
                 \"username\": \"${UPSTREAM_PROXY_USER}\",
                 \"password\": \"${UPSTREAM_PROXY_PASS}\"
-            },
-            {
-                \"type\": \"direct\",
-                \"tag\": \"direct\",
-                \"detour\": \"upstream-proxy\"
             }
         ]"
     fi
